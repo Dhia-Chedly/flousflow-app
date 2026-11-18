@@ -1,0 +1,49 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.aws/
+credentials/
+secrets/
+*.pem
+*.key
+dbt/profiles.yml
+
+# Source datasets and local pipeline output
+/data/raw/**
+/data/tmp/
+/data/output/
+/data/rejected/
+/tmp/
+/checkpoints/
+/spark/checkpoints/
+/spark/spark-warehouse/
+/spark-warehouse/
+/metastore_db/
+derby.log
+/infra/local-data/
+/lakehouse/tables/
+
+# Python environments, caches, tests, and packaging
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+build/
+dist/
+
+# Generated tool output
+logs/
+*.log
+dbt/target/
+dbt/dbt_packages/
+.ipynb_checkpoints/
+.DS_Store

@@ -1,0 +1,4 @@
+step,type,amount,nameOrig,oldbalanceOrg,newbalanceOrig,nameDest,oldbalanceDest,newbalanceDest,isFraud,isFlaggedFraud
+1,PAYMENT,25.50,C_SAMPLE_001,100.00,74.50,M_SAMPLE_001,0.00,0.00,0,0
+1,TRANSFER,100.00,C_SAMPLE_002,150.00,50.00,C_SAMPLE_003,20.00,120.00,0,0
+2,CASH_OUT,50.00,C_SAMPLE_003,120.00,70.00,C_SAMPLE_004,200.00,250.00,0,0
