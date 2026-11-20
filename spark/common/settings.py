@@ -14,8 +14,8 @@ def settings():
         'access_key': required('MINIO_ROOT_USER'),
         'secret_key': required('MINIO_ROOT_PASSWORD'),
         'path': os.environ.get('FLOUSFLOW_BRONZE_PATH', 's3a://flousflow/bronze/transactions'),
-        'checkpoint': os.environ.get('FLOUSFLOW_BRONZE_CHECKPOINT', '/checkpoints/bronze-transactions-v1'),
+        'checkpoint': os.environ.get('FLOUSFLOW_BRONZE_CHECKPOINT', '/checkpoints/bronze-transactions'),
         'brokers': os.environ.get('FLOUSFLOW_KAFKA_BOOTSTRAP_SERVERS', 'kafka:19092'),
-        'topic': os.environ.get('FLOUSFLOW_KAFKA_TOPIC', 'flousflow.transactions.v1'),
+        'topic': os.environ.get('FLOUSFLOW_KAFKA_TOPIC', 'flousflow.transactions'),
         'starting_offsets': os.environ.get('FLOUSFLOW_KAFKA_STARTING_OFFSETS', 'earliest'),
     }

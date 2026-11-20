@@ -120,7 +120,7 @@ def main():
     publish(ROOT / 'data/sample/transactions.csv', run + '-seed')
     await_count(run + '-seed', 3)
     from confluent_kafka import Consumer, TopicPartition
-    topic = 'flousflow.transactions.v1'
+    topic = 'flousflow.transactions'
     consumer = Consumer({'bootstrap.servers': '127.0.0.1:9092', 'group.id': run,
                          'enable.auto.commit': False, 'broker.address.family': 'v4'})
     try:

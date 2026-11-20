@@ -36,14 +36,14 @@ services:
     command:
       - >-
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092
-        --create --if-not-exists --topic flousflow.transactions.v1
+        --create --if-not-exists --topic flousflow.transactions
         --partitions 3 --replication-factor 1
     restart: 'no'
 
   minio:
-    image: flousflow/minio:2025-04-22-v1
+    image: flousflow/minio:2025-04-22
     pull_policy: never
-    profiles: [bronze]
+    profiles: [bronze, silver]
     build:
       context: .
       dockerfile: infra/docker/minio.Dockerfile
@@ -68,9 +68,9 @@ services:
       retries: 20
 
   minio-init:
-    image: flousflow/mc:2025-04-16-v1
+    image: flousflow/mc:2025-04-16
     pull_policy: never
-    profiles: [bronze]
+    profiles: [bronze, silver]
     build:
       context: .
       dockerfile: infra/docker/minio.Dockerfile
@@ -89,7 +89,7 @@ services:
         mc mb --ignore-existing local/flousflow
 
   spark-bronze:
-    profiles: [bronze]
+    profiles: [bronze, silver]
     build:
       context: .
       dockerfile: infra/docker/spark.Dockerfile
@@ -97,10 +97,10 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
       FLOUSFLOW_KAFKA_BOOTSTRAP_SERVERS: kafka:19092
-      FLOUSFLOW_KAFKA_TOPIC: flousflow.transactions.v1
+      FLOUSFLOW_KAFKA_TOPIC: flousflow.transactions
       FLOUSFLOW_S3_ENDPOINT: http://minio:9000
       FLOUSFLOW_BRONZE_PATH: s3a://flousflow/bronze/transactions
-      FLOUSFLOW_BRONZE_CHECKPOINT: /checkpoints/bronze-transactions-v1
+      FLOUSFLOW_BRONZE_CHECKPOINT: /checkpoints/bronze-transactions
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -111,6 +111,36 @@ services:
       - spark-ivy:/opt/spark/ivy
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/bronze-ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+      start_period: 30s
+    stop_grace_period: 60s
+
+  spark-silver:
+    profiles: [silver]
+    build:
+      context: .
+      dockerfile: infra/docker/spark.Dockerfile
+    command: ["/opt/flousflow/spark/silver/ingest.py"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+      FLOUSFLOW_S3_ENDPOINT: http://minio:9000
+      FLOUSFLOW_BRONZE_PATH: s3a://flousflow/bronze/transactions
+      FLOUSFLOW_SILVER_PATH: s3a://flousflow/silver/transactions
+      FLOUSFLOW_SILVER_REJECTS: s3a://flousflow/silver/rejected
+      FLOUSFLOW_SILVER_CONFLICTS: s3a://flousflow/silver/conflicts
+      FLOUSFLOW_SILVER_AUDIT: s3a://flousflow/silver/audit
+      FLOUSFLOW_SILVER_CHECKPOINT: /checkpoints/silver-transactions
+    depends_on:
+      spark-bronze:
+        condition: service_healthy
+    volumes:
+      - spark-checkpoints:/checkpoints
+      - spark-ivy:/opt/spark/ivy
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/silver-ready"]
       interval: 5s
       timeout: 5s
       retries: 120

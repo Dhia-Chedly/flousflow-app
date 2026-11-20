@@ -54,13 +54,13 @@ def make_event(row, dataset_id, number, replay_id, origin, now):
         event_time = origin + timedelta(hours=step - 1)
     except (ValueError, InvalidOperation, OverflowError) as exc:
         raise ValueError(f'CSV data record {number}: {exc}') from exc
-    transaction_id = digest(f'flousflow:v1:{dataset_id}:{number}')
-    event_id = digest(f'flousflow:v1:{transaction_id}:{replay_id}')
+    transaction_id = digest(f'flousflow:{dataset_id}:{number}')
+    event_id = digest(f'flousflow:{transaction_id}:{replay_id}')
     payload = dict(row)
     payload['step'] = step
     payload['isFraud'] = int(row['isFraud'])
     payload['isFlaggedFraud'] = int(row['isFlaggedFraud'])
-    return {'schema_version': 1, 'source_dataset_id': dataset_id, 'source_row_number': number,
+    return {'source_dataset_id': dataset_id, 'source_row_number': number,
             'transaction_id': transaction_id, 'replay_id': replay_id, 'event_id': event_id,
             'event_time': utc_string(event_time), 'produced_at': utc_string(now), 'payload': payload}
 
@@ -127,7 +127,7 @@ def replay(path, topic, replay_id, origin, rate, producer, clock=time.monotonic,
 def main():
     try:
         path = Path(os.environ.get('FLOUSFLOW_SOURCE_PATH', 'data/sample/transactions.csv'))
-        topic = os.environ.get('FLOUSFLOW_KAFKA_TOPIC', 'flousflow.transactions.v1').strip()
+        topic = os.environ.get('FLOUSFLOW_KAFKA_TOPIC', 'flousflow.transactions').strip()
         servers = os.environ.get('FLOUSFLOW_KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092').strip()
         replay_id = os.environ.get('FLOUSFLOW_REPLAY_ID', 'local-demo-001').strip()
         rate = float(os.environ.get('FLOUSFLOW_REPLAY_RATE_PER_SECOND', '10'))

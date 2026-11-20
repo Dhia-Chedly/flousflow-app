@@ -3,8 +3,8 @@ from pyspark.sql import SparkSession
 from common.storage import configure_storage
 
 
-def create_session(config):
-    builder = (SparkSession.builder.appName('flousflow-bronze')
+def create_session(config, app_name='flousflow-bronze'):
+    builder = (SparkSession.builder.appName(app_name)
                .config('spark.sql.extensions', 'io.delta.sql.DeltaSparkSessionExtension')
                .config('spark.sql.catalog.spark_catalog', 'org.apache.spark.sql.delta.catalog.DeltaCatalog')
                .config('spark.sql.session.timeZone', 'UTC')

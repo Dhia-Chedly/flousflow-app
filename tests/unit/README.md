@@ -4,10 +4,11 @@
 uv run --locked python -m unittest discover -s tests/unit -v
 ```
 
-Run from the repository root. Tests cover producer validation (including PaySim
-scientific notation), stable IDs, bounded asynchronous delivery, queue-full retries, delivery failures,
-and Bronze settings. They
-use a fake Kafka client and do not need running services.
+Run from the repository root. Tests cover producer validation, stable IDs,
+bounded asynchronous delivery, queue-full retries, delivery failures, Bronze
+settings, and Silver JSON types and exact monetary values. Producer tests use a
+fake Kafka client; no running services are needed.
 
-For the live pipeline check, see the root README and
-`tests/integration/bronze_pipeline.py`.
+For live Bronze checks, see the root README and
+`tests/integration/bronze_pipeline.py`. For isolated Silver integration tests,
+see the [Silver contract](../../docs/architecture/silver.md).
