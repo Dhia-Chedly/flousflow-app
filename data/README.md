@@ -9,7 +9,8 @@ Profile of the local file:
 - 6,362,620 records and 11 columns, with no blank fields.
 - Steps 1–743, ordered by step.
 - 8,213 fraud-labelled transactions; 16 flagged transactions.
-- All monetary values are nonnegative with at most two decimal places.
+- All monetary values are nonnegative with at most two decimal places; some
+  source strings use scientific notation.
 - 16 zero-amount transactions, all fraud-labelled.
 
 SHA-256:

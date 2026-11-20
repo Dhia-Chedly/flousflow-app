@@ -1,10 +1,13 @@
-# Producer tests
-
-Run from the repository root:
+# Unit tests
 
 ```bash
 uv run --locked python -m unittest discover -s tests/unit -v
 ```
 
-Covers stable IDs, decimal preservation, invalid records, fixture replay, and
-failed or timed-out deliveries. Uses a fake Kafka client; no broker is required.
+Run from the repository root. Tests cover producer validation (including PaySim
+scientific notation), stable IDs, bounded asynchronous delivery, queue-full retries, delivery failures,
+and Bronze settings. They
+use a fake Kafka client and do not need running services.
+
+For the live pipeline check, see the root README and
+`tests/integration/bronze_pipeline.py`.

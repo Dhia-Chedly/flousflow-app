@@ -16,15 +16,24 @@ class FakeProducer:
         self.messages = []
         self.error = error
         self.timeout = timeout
+        self.callbacks = []
+        self.peak_pending = 0
 
     def produce(self, topic, key, value, on_delivery):
         self.messages.append((topic, key, json.loads(value)))
-        self.callback = on_delivery
+        self.callbacks.append(on_delivery)
+        self.peak_pending = max(self.peak_pending, len(self.callbacks))
+
+    def poll(self, timeout):
+        if (self.error or timeout > 0) and self.callbacks:
+            self.callbacks.pop(0)(self.error, None)
 
     def flush(self, timeout):
         if self.timeout:
             return 1
-        self.callback(self.error, None)
+        for callback in self.callbacks:
+            callback(self.error, None)
+        self.callbacks.clear()
         return 0
 
 
@@ -45,6 +54,15 @@ class ProducerTests(unittest.TestCase):
         self.assertEqual(a['payload']['amount'], '0.00')
         self.assertEqual(a['event_time'], '2020-01-01T00:00:00.000000Z')
 
+    def test_scientific_notation_from_paysim(self):
+        row = self.row()
+        row['newbalanceDest'] = '1.916920493E7'
+        event = make_event(row, 'abc', 85, 'run', ORIGIN, ORIGIN)
+        self.assertEqual(event['payload']['newbalanceDest'], '1.916920493E7')
+        row['newbalanceDest'] = '1.234E-2'
+        with self.assertRaisesRegex(ValueError, 'record 85'):
+            make_event(row, 'abc', 85, 'run', ORIGIN, ORIGIN)
+
     def test_invalid_records_include_ordinal(self):
         for field, value in [('amount', '-1'), ('amount', '1.234'), ('step', '0'), ('isFraud', '2'), ('type', 'BAD')]:
             row = self.row(); row[field] = value
@@ -62,7 +80,36 @@ class ProducerTests(unittest.TestCase):
         for producer in (FakeProducer(error='failure'), FakeProducer(timeout=True)):
             with self.subTest(timeout=producer.timeout), self.assertRaises(RuntimeError):
                 replay(FIXTURE, 'topic', 'run', ORIGIN, 1, producer)
-            self.assertEqual(len(producer.messages), 1)
+            self.assertEqual(len(producer.messages), 3 if producer.timeout else 1)
+
+    def test_bounded_async_queue(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'many.csv'
+            with path.open('w', newline='') as stream:
+                writer = csv.DictWriter(stream, fieldnames=FIELDS)
+                writer.writeheader()
+                writer.writerows([self.row()] * 1200)
+            producer = FakeProducer()
+            count = replay(path, 'topic', 'run', ORIGIN, 10000, producer,
+                           clock=lambda: 0, sleep=lambda _: None)
+            self.assertEqual(count, 1200)
+            self.assertEqual(producer.peak_pending, 1000)
+            self.assertEqual(producer.callbacks, [])
+
+    def test_queue_full_retries_without_losing_event(self):
+        class FullOnce(FakeProducer):
+            blocked = False
+
+            def produce(self, *args, **kwargs):
+                if not self.blocked:
+                    self.blocked = True
+                    raise BufferError('full')
+                super().produce(*args, **kwargs)
+
+        producer = FullOnce()
+        self.assertEqual(replay(FIXTURE, 'topic', 'run', ORIGIN, 100, producer,
+                                clock=lambda: 0, sleep=lambda _: None), 3)
+        self.assertEqual(len(producer.messages), 3)
 
     def test_bad_header_stops_before_delivery(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -47,3 +47,17 @@ dbt/target/
 dbt/dbt_packages/
 .ipynb_checkpoints/
 .DS_Store
+
+# Local editor settings and scratch files
+/.vscode/
+/.idea/
+*.swp
+*.swo
+*~
+
+# Local Spark runtime output
+/artifacts/
+/spark/artifacts/
+/spark-events/
+/spark/metastore_db/
+/spark/derby.log

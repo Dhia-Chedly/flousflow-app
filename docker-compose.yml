@@ -40,5 +40,85 @@ services:
         --partitions 3 --replication-factor 1
     restart: 'no'
 
+  minio:
+    image: flousflow/minio:2025-04-22-v1
+    pull_policy: never
+    profiles: [bronze]
+    build:
+      context: .
+      dockerfile: infra/docker/minio.Dockerfile
+      target: server
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        : "$${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}" "$${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}";
+        exec minio server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+    ports:
+      - '127.0.0.1:9000:9000'
+      - '127.0.0.1:9001:9001'
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "minio-healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio-init:
+    image: flousflow/mc:2025-04-16-v1
+    pull_policy: never
+    profiles: [bronze]
+    build:
+      context: .
+      dockerfile: infra/docker/minio.Dockerfile
+      target: client
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        : "$${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}" "$${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}";
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD";
+        mc mb --ignore-existing local/flousflow
+
+  spark-bronze:
+    profiles: [bronze]
+    build:
+      context: .
+      dockerfile: infra/docker/spark.Dockerfile
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+      FLOUSFLOW_KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      FLOUSFLOW_KAFKA_TOPIC: flousflow.transactions.v1
+      FLOUSFLOW_S3_ENDPOINT: http://minio:9000
+      FLOUSFLOW_BRONZE_PATH: s3a://flousflow/bronze/transactions
+      FLOUSFLOW_BRONZE_CHECKPOINT: /checkpoints/bronze-transactions-v1
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - spark-checkpoints:/checkpoints
+      - spark-ivy:/opt/spark/ivy
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/bronze-ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+      start_period: 30s
+    stop_grace_period: 60s
+
 volumes:
   kafka-data:
+  minio-data:
+  spark-checkpoints:
+  spark-ivy:

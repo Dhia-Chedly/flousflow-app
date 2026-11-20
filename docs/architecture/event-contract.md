@@ -37,8 +37,9 @@ Identical rows at different positions remain separate source records.
 | `amount`, `oldbalanceOrg`, `newbalanceOrig`, `oldbalanceDest`, `newbalanceDest` | Decimal string | Nonnegative, at most two decimal places, fits `DECIMAL(18,2)` |
 | `isFraud`, `isFlaggedFraud` | Integer | `0` or `1` |
 
-Zero amounts are valid. Do not enforce balance reconciliation. Keep fraud labels
-separate from predictive features. The producer stops at the first invalid record
+Scientific notation is accepted when its decimal value meets the constraints;
+the original string is preserved. Zero amounts are valid. Balance reconciliation
+is not required. Fraud labels are retained for evaluation. The producer stops at the first invalid record
 and reports its ordinal; earlier records may already have been published.
 
 ## Time and recovery
@@ -53,10 +54,11 @@ The default origin is `2020-01-01T00:00:00Z`. Timestamps use RFC 3339 UTC format
 Replay speed controls publication pace independently of simulated time.
 
 Recovery reuses the source bytes, replay ID, and time origin. A new simulation
-uses a new replay ID. The producer waits for each acknowledgement and stops on
-delivery failure or timeout. A timeout has an unknown outcome. Restart begins at
+uses a new replay ID. The producer keeps up to 1,000 events pending and checks delivery callbacks.
+It flushes before reporting success and stops submitting on failure or timeout.
+Already queued records may still arrive after an input error. A timeout has an unknown outcome. Restart begins at
 row one, so duplicate deliveries remain possible despite client idempotence.
 
-Bronze will preserve events and add Kafka offsets and ingestion time. Silver will
+Bronze preserves events and adds Kafka offsets and ingestion time. Silver will
 own validation and deduplication by `event_id`; a bounded deduplication window
 alone cannot remove duplicates across arbitrary full replays.

@@ -1,0 +1,12 @@
+**
+!infra/
+!infra/docker/
+!infra/docker/spark.Dockerfile
+!infra/docker/minio.Dockerfile
+!infra/docker/spark-defaults.conf
+!spark/
+!spark/**
+spark/**/__pycache__/
+
+!infra/docker/ivysettings.xml
+!infra/docker/minio-healthcheck.go

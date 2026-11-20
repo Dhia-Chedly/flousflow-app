@@ -43,10 +43,10 @@ def make_event(row, dataset_id, number, replay_id, origin, now):
         if row['type'] not in TYPES:
             raise ValueError('unknown transaction type')
         for key in MONEY:
-            if not re.fullmatch(r'\d+(?:\.\d{1,2})?', row[key]):
+            if not re.fullmatch(r'\d+(?:\.\d+)?(?:[Ee][+-]?\d+)?', row[key]):
                 raise ValueError(f'{key} must be a nonnegative decimal with at most two decimal places')
             value = Decimal(row[key])
-            if not value.is_finite() or value >= Decimal('10000000000000000'):
+            if not value.is_finite() or value.as_tuple().exponent < -2 or value >= Decimal('10000000000000000'):
                 raise ValueError(f'{key} exceeds DECIMAL(18,2)')
         for key in ('isFraud', 'isFlaggedFraud'):
             if row[key] not in ('0', '1'):
@@ -68,7 +68,22 @@ def make_event(row, dataset_id, number, replay_id, origin, now):
 def replay(path, topic, replay_id, origin, rate, producer, clock=time.monotonic, sleep=time.sleep):
     source_hash = dataset_hash(path)
     delivered = 0
+    pending = 0
+    errors = []
     next_send = clock()
+
+    def acknowledged(error, message):
+        nonlocal pending, delivered
+        pending -= 1
+        if error is not None:
+            errors.append(str(error))
+        else:
+            delivered += 1
+
+    def check_errors():
+        if errors:
+            raise RuntimeError(f'Delivery failed: {errors[0]}')
+
     with open(path, newline='', encoding='utf-8') as source:
         reader = csv.DictReader(source, strict=True)
         if reader.fieldnames != list(FIELDS):
@@ -79,19 +94,33 @@ def replay(path, topic, replay_id, origin, rate, producer, clock=time.monotonic,
                 delay = next_send - clock()
                 if delay > 0:
                     sleep(delay)
-                result = []
-                producer.produce(topic, key=event['event_id'].encode(),
-                                 value=json.dumps(event, separators=(',', ':')).encode(),
-                                 on_delivery=lambda err, msg: result.append(err))
-                remaining = producer.flush(30)
-                if remaining or not result:
-                    raise RuntimeError(f'CSV data record {number}: delivery timed out; outcome is unknown')
-                if result[0] is not None:
-                    raise RuntimeError(f'CSV data record {number}: delivery failed: {result[0]}')
-                delivered += 1
+                producer.poll(0)
+                check_errors()
+                deadline = clock() + 30
+                while pending >= 1000:
+                    producer.poll(0.1)
+                    check_errors()
+                    if clock() >= deadline:
+                        raise RuntimeError('Delivery queue timed out; outcome is unknown')
+                while True:
+                    try:
+                        producer.produce(topic, key=event['event_id'].encode(),
+                                         value=json.dumps(event, separators=(',', ':')).encode(),
+                                         on_delivery=acknowledged)
+                        pending += 1
+                        break
+                    except BufferError:
+                        producer.poll(0.1)
+                        check_errors()
+                        if clock() >= deadline:
+                            raise RuntimeError('Kafka queue remained full for 30 seconds')
                 next_send = max(next_send + 1 / rate, clock())
         except csv.Error as exc:
             raise ValueError(f'CSV parse error near line {reader.line_num}: {exc}') from exc
+    remaining = producer.flush(30)
+    check_errors()
+    if remaining or pending:
+        raise RuntimeError('Final delivery timed out; outcome is unknown')
     return delivered
 
 
@@ -109,7 +138,8 @@ def main():
             raise ValueError('event time origin must have a UTC offset')
         from confluent_kafka import Producer
         producer = Producer({'bootstrap.servers': servers, 'enable.idempotence': True,
-                             'message.timeout.ms': 25000, 'acks': 'all'})
+                             'message.timeout.ms': 25000, 'acks': 'all', 'linger.ms': 5,
+                             'queue.buffering.max.messages': 1000, 'queue.buffering.max.kbytes': 16384})
         count = replay(path, topic, replay_id, origin, rate, producer)
         print(f'Published and acknowledged {count} events to {topic}.')
     except (OSError, ValueError, RuntimeError, ImportError) as exc:
