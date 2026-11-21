@@ -2,7 +2,7 @@
 
 Local input: `raw/PS_20174392719_1491204439457_log.csv` from
 [PaySim on Kaggle](https://www.kaggle.com/datasets/ealaxi/paysim1).
-The full dataset is excluded from Git; place your copy in `data/raw/`.
+The full dataset is excluded from Git. A three-record synthetic sample is included.
 
 Profile of the local file:
 

@@ -1,8 +1,5 @@
 """Build hourly transaction metrics from a Silver Delta snapshot."""
-import os
 from pyspark.sql import functions as F
-from common.session import create_session
-from common.settings import settings
 
 
 def aggregate(transactions):
@@ -15,15 +12,8 @@ def aggregate(transactions):
 
 
 def main():
-    spark = create_session(settings(), app_name='flousflow-gold')
-    source = os.getenv('FLOUSFLOW_SILVER_PATH', 's3a://flousflow/silver/transactions')
-    target = os.getenv('FLOUSFLOW_GOLD_HOURLY_PATH', 's3a://flousflow/gold/hourly_transaction_metrics')
-    try:
-        metrics = aggregate(spark.read.format('delta').load(source))
-        metrics.write.format('delta').mode('overwrite').save(target)
-        print(f'Gold hourly metrics written to {target}', flush=True)
-    finally:
-        spark.stop()
+    from gold.refresh import run_table
+    run_table('hourly_transaction_metrics')
 
 
 if __name__ == '__main__':

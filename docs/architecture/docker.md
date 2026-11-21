@@ -1,124 +1,86 @@
-# Local Docker setup
+# Local infrastructure
 
-The producer runs on the host. Compose runs Kafka, MinIO, and Spark on a shared
-bridge network named `flousflow`.
+Docker Compose connects the services through the `flousflow` bridge network.
+The Python producer runs on the host.
 
-| Compose service | Container | Purpose |
+| Service | Image | Role |
 | --- | --- | --- |
-| `kafka` | `kafka` | One KRaft broker/controller, Kafka 4.1.1 |
-| `kafka-init` | `kafka-init` | Create `flousflow.transactions` with three partitions and one replica |
-| `minio` | `minio` | Store Bronze and Silver Delta tables |
-| `minio-init` | `minio-init` | Create the `flousflow` bucket |
-| `bronze` | `bronze` | Write Kafka records to Bronze with `local[2]` |
-| `silver` | `silver` | Validate and deduplicate Bronze records with `local[2]` |
+| `kafka` | `apache/kafka:4.1.1` | Single KRaft broker/controller |
+| `kafka-init` | `apache/kafka:4.1.1` | Creates `flousflow.transactions` with three partitions |
+| `minio` | Locally compiled MinIO | Stores Bronze, Silver, and Gold Delta tables |
+| `minio-init` | Locally compiled mc | Creates the `flousflow` bucket |
+| `bronze` | Local Spark image | Kafka-to-Delta streaming job |
+| `silver` | Local Spark image | Bronze-to-Silver streaming job |
+| `postgres` | `postgres:17.7-alpine` | SQL serving database |
+| `serving` | Local Spark image with psycopg | Temporary Gold refresh and PostgreSQL loader |
 
-Compose commands use the same names as the containers.
-Container names are fixed, so only one copy of this Compose project can run at a time.
+Initialization containers exit after setup. Kafka, MinIO, Bronze, Silver, and
+PostgreSQL remain running. Gold jobs use temporary Spark containers. A shared
+Dockerfile defines ingestion and serving targets; the serving target adds psycopg 3.2.6.
 
-The initialization services exit with code `0` after setup. Bronze waits for both;
-Silver waits for Bronze to be healthy. Each writer's health check passes after a
-successful streaming batch or idle notification and clears on query termination.
-Readiness does not prove catch-up or detect a stalled batch. Silver logs completed
-batch row counts and durations; the Bronze integration test checks Kafka offsets.
+## Connections
 
-## Addresses
-
-| Client | Destination |
+| Connection | Address |
 | --- | --- |
-| Host producer | `localhost:9092` |
+| Host producer → Kafka | `localhost:9092` |
 | Bronze → Kafka | `kafka:19092` |
 | Spark → MinIO | `http://minio:9000` |
+| Serving loader → PostgreSQL | `postgres:5432` |
+| Host SQL client → PostgreSQL | `localhost:5432` |
 | Host browser → MinIO console | `http://localhost:9001` |
 
-Host ports bind to `127.0.0.1`. Connections use plaintext. Inside a container,
-`localhost` refers to that container; use service names to reach another one.
-Kafka advertises separate host and container addresses. Port 9093 is its internal
-controller listener.
+Published ports bind to localhost. Container traffic uses service names and
+plaintext connections. Kafka has separate advertised host and container listeners.
 
-Compose reads MinIO credentials from `.env`. The host producer reads exported
-shell variables. The Bronze path is `s3a://flousflow/bronze/transactions`.
+## Storage and recovery
 
-## Persistence
+| Volume | Contents |
+| --- | --- |
+| `kafka-data` | Kafka records and broker state |
+| `minio-data` | Delta data files and transaction logs |
+| `spark-checkpoints` | Separate Bronze and Silver streaming progress |
+| `spark-ivy` | Cached JVM dependencies |
+| `gold-lock` | Shared local Gold writer lock |
+| `postgres-data` | Serving tables, roles, and refresh metadata |
 
-| Volume | Mount | Data |
-| --- | --- | --- |
-| `kafka-data` | `/var/lib/kafka/data` | Kafka messages and broker state |
-| `minio-data` | `/data` | Parquet files and Delta log |
-| `spark-checkpoints` | `/checkpoints` | Streaming progress |
-| `spark-ivy` | `/opt/spark/ivy` | Downloaded jars |
+Volumes survive container recreation. Bronze resumes from its Kafka checkpoint;
+Silver resumes from its Delta checkpoint. A development reset clears Kafka,
+lakehouse data, and streaming checkpoints together. PostgreSQL is a derived copy
+and remains unchanged until a successful refresh.
 
-Compose prefixes these names with the project name. Rebuilding containers keeps
-the volumes. `docker compose --profile bronze --profile silver down -v` deletes them.
+Bronze starts after topic and bucket initialization; Silver waits for Bronze
+readiness. Streaming health checks record a successful batch or idle notification.
+They indicate readiness, not catch-up or stalled-batch detection.
 
-Use one writer for the Bronze table and its checkpoint. First startup reads the
-earliest retained Kafka records; restarts resume from the checkpoint. Deleting
-the checkpoint can replay records.
+## Configuration
 
-Silver reads the Bronze Delta table in MinIO, not Kafka directly. It uses
-`/checkpoints/silver-transactions`, separate from Bronze's
-`/checkpoints/bronze-transactions` in the shared volume. Run one writer per
-layer. See the [Silver contract](silver.md) for output paths and retry behavior.
+Compose profiles separate ingestion (`bronze`, `silver`) from serving (`serving`).
+Credentials come from the ignored `.env`; [.env.example](../../.env.example) lists
+the settings. The host producer reads exported environment variables.
 
-## Commands
+PostgreSQL has separate admin, loader, and reader roles. Database initialization
+runs on an empty volume; existing passwords are stored in PostgreSQL. Readers
+have SELECT access to `serving`. Multi-statement queries can use repeatable-read
+transactions to share one committed refresh.
 
-```bash
-# Build storage images once
-docker compose --profile silver build minio minio-init
-# Build/start both writers and their dependencies
-docker compose --profile silver up -d --build silver
-# Status and logs
-docker compose --profile silver ps -a
-docker compose logs -f bronze silver
-# Stop/resume ingestion
-docker compose stop silver bronze
-docker compose --profile silver up -d silver
-# Stop everything, keeping data
-docker compose --profile bronze --profile silver down
-```
+The Spark base is 3.5.6 with Java 17 and Python. JVM dependencies are pinned in
+`spark-defaults.conf`: Delta 3.3.3, Kafka connector 3.5.6, Hadoop S3A 3.3.4, and AWS
+SDK 1.12.262. Spark runs with two local worker threads.
 
-Plain `docker compose up -d` starts Kafka only, including its initializer. MinIO
-and Bronze belong to both the `bronze` and `silver` profiles. Silver belongs to
-the `silver` profile. Targeting a writer starts its dependencies too.
+MinIO and mc are compiled from checksum-pinned source releases using Go 1.24.2,
+with Alpine runtime images. Their source releases are recorded in the Dockerfile.
 
-## Builds
+Serving waits for PostgreSQL health and MinIO bucket initialization. It can start
+those dependencies from a stopped project; Silver data must already exist or
+arrive while an optional replay requirement waits.
 
-`infra/docker/spark.Dockerfile` extends Spark 3.5.6 with Java 17 and Python.
-`spark-defaults.conf` pins Delta 3.3.3, Kafka connector 3.5.6, Hadoop S3A 3.3.4,
-and AWS SDK modules 1.12.262. Jars download from `repo.maven.apache.org` on first
-startup and are cached. Spark runs as user 185.
+`FLOUSFLOW_REFRESH_REPLAY_ID` and `FLOUSFLOW_REFRESH_EXPECTED_COUNT` together set
+an optional completion requirement, measured in valid Silver transactions.
+`FLOUSFLOW_REFRESH_WAIT_SECONDS` bounds the wait. The snapshot that meets the
+requirement is the one used for aggregation. Without a requirement, refresh uses
+the current Silver snapshot. Rejected events are excluded from the expected count.
 
-`infra/docker/minio.Dockerfile` compiles MinIO and mc from checksum-pinned source
-releases. The server release is `2025-04-22T22-12-26Z`; the client release is
-`2025-04-16T18-13-26Z`. It uses Go 1.24.2 for compilation and Alpine for both runtime images. A small compiled
-HTTP probe checks the server.
-
-## Troubleshooting
-
-Check service logs first. Slow initial startup usually means dependency downloads
-or catch-up are still running. A missing table can mean no batch has committed yet.
-For authentication errors, check `.env` and recreate services after changing it.
-For connection errors, check the host/container addresses above. IPv6 `localhost`
-attempts can fail because the host Kafka port is bound to IPv4.
-
-## Reset local data
-
-When a schema change needs a clean replay, stop the pipeline and remove its Kafka,
-MinIO, and checkpoint volumes. This deletes all local messages and lakehouse tables;
-the source CSV and downloaded Spark dependencies are kept.
-
-```bash
-docker compose --profile bronze --profile silver down
-docker volume rm fina_kafka-data fina_minio-data fina_spark-checkpoints
-docker compose --profile silver up -d --build silver
-# Wait for Kafka and Bronze to be healthy before replaying.
-docker compose --profile silver ps -a
-uv run --locked flousflow-producer
-```
-
-Reset all three data volumes together so Kafka offsets, Delta tables, and streaming
-checkpoints start from the same empty state. Routine code changes only need a
-rebuild; they do not require deleting data.
-
-These volume names assume the Compose project is named `fina`. Use your project
-prefix if you changed it. The producer defaults to the sample CSV; use the source
-path and replay settings in the README for a full replay.
+Gold writers share a file lock through the `gold-lock` volume. The lock covers
+snapshot selection, Delta writes, and serving publication. It applies to this
+single-host Compose deployment. GitHub Actions checks unit tests and Compose
+configuration on pushes and pull requests.

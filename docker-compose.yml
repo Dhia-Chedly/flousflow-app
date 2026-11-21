@@ -46,7 +46,7 @@ services:
     container_name: minio
     image: flousflow/minio:2025-04-22
     pull_policy: never
-    profiles: [bronze, silver]
+    profiles: [bronze, silver, serving]
     build:
       context: .
       dockerfile: infra/docker/minio.Dockerfile
@@ -74,7 +74,7 @@ services:
     container_name: minio-init
     image: flousflow/mc:2025-04-16
     pull_policy: never
-    profiles: [bronze, silver]
+    profiles: [bronze, silver, serving]
     build:
       context: .
       dockerfile: infra/docker/minio.Dockerfile
@@ -98,6 +98,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/spark.Dockerfile
+      target: ingestion
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
@@ -128,6 +129,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/spark.Dockerfile
+      target: ingestion
     command: ["/opt/flousflow/spark/silver/ingest.py"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
@@ -145,6 +147,7 @@ services:
     volumes:
       - spark-checkpoints:/checkpoints
       - spark-ivy:/opt/spark/ivy
+      - gold-lock:/locks
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/silver-ready"]
       interval: 5s
@@ -153,7 +156,54 @@ services:
       start_period: 30s
     stop_grace_period: 60s
 
+  postgres:
+    container_name: postgres
+    image: postgres:17.7-alpine
+    profiles: [serving]
+    environment:
+      POSTGRES_DB: flousflow
+      POSTGRES_USER: flousflow_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      FLOUSFLOW_POSTGRES_LOADER_PASSWORD: ${FLOUSFLOW_POSTGRES_LOADER_PASSWORD:-}
+      FLOUSFLOW_POSTGRES_READER_PASSWORD: ${FLOUSFLOW_POSTGRES_READER_PASSWORD:-}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro,z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flousflow_admin -d flousflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  serving:
+    profiles: [serving]
+    build:
+      context: .
+      dockerfile: infra/docker/spark.Dockerfile
+      target: serving
+    command: ["/opt/flousflow/spark/serving/refresh.py"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+      FLOUSFLOW_POSTGRES_LOADER_PASSWORD: ${FLOUSFLOW_POSTGRES_LOADER_PASSWORD:-}
+      FLOUSFLOW_POSTGRES_READER_PASSWORD: ${FLOUSFLOW_POSTGRES_READER_PASSWORD:-}
+      FLOUSFLOW_REFRESH_REPLAY_ID: ${FLOUSFLOW_REFRESH_REPLAY_ID:-}
+      FLOUSFLOW_REFRESH_EXPECTED_COUNT: ${FLOUSFLOW_REFRESH_EXPECTED_COUNT:-}
+      FLOUSFLOW_REFRESH_WAIT_SECONDS: ${FLOUSFLOW_REFRESH_WAIT_SECONDS:-600}
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    volumes:
+      - spark-ivy:/opt/spark/ivy
+      - gold-lock:/locks
+
 volumes:
+  gold-lock:
+  postgres-data:
   kafka-data:
   minio-data:
   spark-checkpoints:

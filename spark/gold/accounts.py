@@ -1,8 +1,5 @@
 """Aggregate account activity; amounts are flows, not account balances."""
-import os
 from pyspark.sql import functions as F
-from common.session import create_session
-from common.settings import settings
 
 
 def aggregate(transactions):
@@ -22,14 +19,8 @@ def aggregate(transactions):
 
 
 def main():
-    spark = create_session(settings(), app_name='flousflow-gold-accounts')
-    try:
-        source = os.getenv('FLOUSFLOW_SILVER_PATH', 's3a://flousflow/silver/transactions')
-        target = os.getenv('FLOUSFLOW_GOLD_ACCOUNTS_PATH', 's3a://flousflow/gold/account_activity')
-        aggregate(spark.read.format('delta').load(source)).write.format('delta').mode('overwrite').save(target)
-        print(f'Gold account activity written to {target}', flush=True)
-    finally:
-        spark.stop()
+    from gold.refresh import run_table
+    run_table('account_activity')
 
 
 if __name__ == '__main__':

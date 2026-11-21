@@ -27,5 +27,6 @@ with tempfile.TemporaryDirectory() as directory:
                    env=dict(os.environ, FLOUSFLOW_SOURCE_PATH=str(sample), FLOUSFLOW_REPLAY_ID=replay,
                             FLOUSFLOW_REPLAY_RATE_PER_SECOND='2000'))
 subprocess.run(['docker', 'compose', '--profile', 'silver', 'run', '--rm', '--no-deps',
-                '-e', 'FLOUSFLOW_VALIDATE_REPLAY_ID=' + replay, 'silver',
+                '-e', 'FLOUSFLOW_REFRESH_REPLAY_ID=' + replay,
+                '-e', 'FLOUSFLOW_REFRESH_EXPECTED_COUNT=10000', 'silver',
                 '/opt/flousflow/spark/gold/validate.py'], cwd=ROOT, check=True)
