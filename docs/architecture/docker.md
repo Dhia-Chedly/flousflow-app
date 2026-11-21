@@ -89,8 +89,7 @@ startup and are cached. Spark runs as user 185.
 
 `infra/docker/minio.Dockerfile` compiles MinIO and mc from checksum-pinned source
 releases. The server release is `2025-04-22T22-12-26Z`; the client release is
-`2025-04-16T18-13-26Z`. This build was added after registry pulls failed. It uses
-Go 1.24.2 for compilation and Alpine for both runtime images. A small compiled
+`2025-04-16T18-13-26Z`. It uses Go 1.24.2 for compilation and Alpine for both runtime images. A small compiled
 HTTP probe checks the server.
 
 ## Troubleshooting
@@ -100,28 +99,6 @@ or catch-up are still running. A missing table can mean no batch has committed y
 For authentication errors, check `.env` and recreate services after changing it.
 For connection errors, check the host/container addresses above. IPv6 `localhost`
 attempts can fail because the host Kafka port is bound to IPv4.
-
-## Reusing MinIO images
-
-Build once locally:
-
-```bash
-docker compose --profile silver build minio minio-init
-```
-
-Compose uses `flousflow/minio:2025-04-22` and `flousflow/mc:2025-04-16`
-without pulling. Reuse these local tags across runs. To move the built images to
-another machine with the same CPU architecture:
-
-```bash
-docker image save -o /tmp/flousflow-storage.tar flousflow/minio:2025-04-22 flousflow/mc:2025-04-16
-# Transfer the archive, then on the other machine:
-docker image load -i /tmp/flousflow-storage.tar
-```
-
-No registry publishing is configured. The source Dockerfile remains the fallback
-for a clean machine or another architecture. Rebuild the images when changing
-the source or runtime image.
 
 ## Reset local data
 

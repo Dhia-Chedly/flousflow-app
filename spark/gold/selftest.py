@@ -6,6 +6,7 @@ from pyspark.sql import types as T, functions as F
 from common.session import create_session
 from common.settings import settings
 from gold.hourly import aggregate
+from gold.accounts import aggregate as account_activity
 
 spark = create_session(settings(), app_name='flousflow-gold-selftest')
 try:
@@ -28,6 +29,18 @@ try:
             row = gold.filter((F.col('replay_id') == 'a') & (F.col('transaction_type') == 'TRANSFER')).first()
             assert row.transaction_count == 2 and row.total_amount == Decimal('3.00')
             assert row.average_amount == Decimal('1.50') and row.fraud_rate == 0.5
+    accounts_source = source.withColumn('origin_account_id', F.lit('shared')).withColumn(
+        'destination_account_id', F.when(F.col('amount') == 1, 'shared').otherwise('destination'))
+    rows = {(r.replay_id, r.account_id): r for r in account_activity(accounts_source).collect()}
+    shared = rows[('a', 'shared')]
+    assert shared.outgoing_count == 3 and shared.outgoing_amount == Decimal('6.00')
+    assert shared.incoming_count == 1 and shared.incoming_amount == Decimal('1.00')
+    assert shared.outgoing_fraud_count == 2 and shared.incoming_fraud_count == 1
+    assert shared.first_activity_at == datetime(2020, 1, 1, 1, 5)
+    assert shared.last_activity_at == datetime(2020, 1, 1, 2, 0)
+    assert rows[('b', 'shared')].outgoing_amount == Decimal('4.00')
+    assert rows[('a', 'destination')].outgoing_count == 0
+    assert account_activity(accounts_source.limit(0)).count() == 0
     print('GOLD_SELFTEST_PASS', flush=True)
 finally:
     spark.stop()

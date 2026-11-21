@@ -40,7 +40,6 @@ Do not delete a checkpoint without a recovery plan.
 Table paths and checkpoints use stable names. When a development change makes
 existing data incompatible, [reset the local pipeline](docker.md#reset-local-data)
 and replay the source CSV.
-Git tracks the implementation and event contract.
 
 Silver logs the input row count and duration after each completed batch. Its
 health check passes after a successful batch or idle notification and clears when

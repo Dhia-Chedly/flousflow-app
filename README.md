@@ -1,152 +1,103 @@
 # FlousFlow
 
-A financial data engineering project using synthetic PaySim transactions.
-Replays CSV events through Kafka into Bronze and Silver Delta tables in MinIO.
+A local data pipeline for synthetic PaySim transactions.
 
 ```text
-CSV → Python producer → Kafka → Spark Bronze → Spark Silver
-                                  └── Delta tables in MinIO ──┘
+CSV → Python producer → Kafka → Bronze → Silver → Gold
 ```
 
-Silver parses and validates Bronze records, deduplicates by event ID, and records
-rejections, conflicts, and quality outcomes. Gold computes hourly metrics from Silver snapshots; serving comes later.
+Spark writes Delta tables to MinIO. Bronze keeps the raw events. Silver validates
+and deduplicates them, keeping rejected records and conflicting deliveries.
+Gold produces hourly transaction metrics and account activity in batch jobs.
 
-## Run locally
+## Run
 
 Requires Python 3.12–3.14, uv, Docker Engine, and Docker Compose.
-Run commands from the repository root.
-
-Create `.env` from `.env.example` if you do not already have one. Set
-`MINIO_ROOT_USER` (at least three characters) and `MINIO_ROOT_PASSWORD` (at least
-eight). Keep `.env` local.
+Run commands from the repository root. Copy `.env.example` to `.env` and set
+`MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD`.
 
 ```bash
 uv sync --locked
 docker compose --profile silver build minio minio-init
 docker compose --profile silver up -d --build silver
 docker compose --profile silver ps -a
-```
-
-This starts Kafka, MinIO, and both Spark writers on the `flousflow` network.
-Their container names are `kafka`, `minio`, `bronze`, and `silver`; the setup
-containers are `kafka-init` and `minio-init`. The first build compiles MinIO;
-Spark downloads its JVM dependencies on first startup. The initialization services
-should exit with code `0`. Follow startup and batch progress with:
-
-```bash
-docker compose logs -f bronze silver
-```
-
-Replay the included three-record sample:
-
-```bash
 uv run --locked flousflow-producer
 ```
 
-Wait for a completed Silver batch before inspecting the tables. Producer success
-means Kafka acknowledged the events; Spark processes them afterward.
+The producer defaults to the three-record sample. Kafka, MinIO, Bronze, and Silver
+stay running; `kafka-init` and `minio-init` exit after setup. The first build compiles
+MinIO and Spark downloads its dependencies. Logs: `docker compose logs -f bronze silver`.
+MinIO console: http://localhost:9001.
 
-```bash
-# Raw Kafka records in Bronze
-docker compose run --rm --no-deps bronze /opt/flousflow/spark/bronze/inspect_table.py
-
-# Validated transactions and quality outcomes in Silver
-docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/silver/inspect_silver.py
-```
-
-After a fresh start with empty data, the sample produces three Silver transactions
-and three accepted audit outcomes. Replaying it with the same replay ID adds
-Bronze deliveries and duplicate audit outcomes, but no additional transactions.
-
-MinIO's console is at http://localhost:9001. Bronze is stored under
-`s3a://flousflow/bronze/transactions`; Silver tables are under
-`s3a://flousflow/silver/`.
-
-## Producer configuration
-
-The host producer reads exported environment variables; it does not load `.env`
-automatically. Defaults are listed in [.env.example](.env.example).
+For the full dataset, place the CSV in `data/raw/`:
 
 ```bash
 FLOUSFLOW_SOURCE_PATH=data/raw/PS_20174392719_1491204439457_log.csv \
 FLOUSFLOW_REPLAY_ID=run-001 uv run --locked flousflow-producer
 ```
 
-The default limit is 10 events per second; a full replay takes at least 7.4 days.
-Change `FLOUSFLOW_REPLAY_RATE_PER_SECOND` to adjust it. The producer queues up to
-1,000 pending events, checks delivery callbacks, and flushes before reporting
-success. It stops submitting on invalid input or a
-reported delivery failure; already queued events may still arrive. Restart begins at
-row one; reuse the replay ID for recovery. Bronze preserves repeated deliveries.
+The producer reads shell variables, not `.env`. Defaults are in [.env.example](.env.example).
+The default rate is 10 events/second; change `FLOUSFLOW_REPLAY_RATE_PER_SECOND` for
+larger replays. Restarting begins at row one. Reusing the source and replay ID
+preserves transaction identity; Silver removes duplicate deliveries.
 
-## Stop or reset
+## Gold
 
-Stop the pipeline while keeping its data:
+Run after Silver has processed the replay. Rebuild the `silver` image after code changes.
+
+```bash
+docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/gold/hourly.py
+docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/gold/accounts.py
+```
+
+| Table under `s3a://flousflow/gold/` | Grouping | Metrics |
+| --- | --- | --- |
+| `hourly_transaction_metrics` | Replay, UTC hour, transaction type | Count, total/average amount, fraud count and rate |
+| `account_activity` | Replay, account | Incoming/outgoing counts, amounts and fraud counts; first/last activity |
+
+Fraud metrics use the source labels. Account amounts describe flows, not balances;
+a self-transfer counts once in each direction. Each job replaces its table from a
+Silver snapshot. Run one writer per Gold table. The two tables commit independently.
+
+## Inspect
+
+```bash
+docker compose run --rm --no-deps bronze /opt/flousflow/spark/bronze/inspect_table.py
+docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/silver/inspect_silver.py
+docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/gold/inspect_gold.py
+docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/gold/inspect_gold.py --accounts
+```
+
+Producer success means Kafka acknowledged the records. Wait for Silver to finish
+before refreshing Gold; tables do not exist until their first write.
+
+## Tests
+
+Unit tests need no services. The Gold self-test uses temporary Delta tables.
+Both pipeline tests require the running services and local PaySim CSV; they leave
+test data in place. The Gold pipeline test also replaces both Gold tables.
+
+```bash
+uv run --locked python -m unittest discover -s tests/unit -v
+docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/gold/selftest.py
+uv run --locked python tests/integration/bronze_pipeline.py
+uv run --locked python tests/integration/gold_pipeline.py
+```
+
+The Gold pipeline test replays 10,000 records, reconciles counts, amounts, and fraud
+counts with Silver, and compares repeated writes. Run it without other Gold writers.
+Silver's isolated tests are listed in [silver.md](docs/architecture/silver.md).
+
+## Stop
 
 ```bash
 docker compose --profile bronze --profile silver down
 ```
 
-Topics, table paths, and checkpoints keep stable names as the project changes.
-For incompatible schema changes, [reset the local data](docs/architecture/docker.md#reset-local-data)
-and replay the CSV. Git tracks the code and event contract; dependency pins keep
-builds reproducible.
+Data stays in Docker volumes. For a clean replay, use the
+[reset commands](docs/architecture/docker.md#reset-local-data).
 
-## Tests
-
-```bash
-# Unit tests; no services required
-uv run --locked python -m unittest discover -s tests/unit -v
-
-# Bronze integration checks; requires the local PaySim CSV and no other publishers
-uv run --locked python tests/integration/bronze_pipeline.py
-```
-
-The live checks publish 10,000 records, verify Delta storage, restart Spark, publish
-100 additional records, and recreate its container. They also check malformed JSON
-and repeated event IDs. The script accounts for existing records and leaves the
-writer and test data in place.
-
-For Silver retry, validation, and checkpoint tests, see the
-[Silver test instructions](docs/architecture/silver.md#isolated-test).
-
-## Files
-
-- `producer/`: CSV validation and Kafka replay.
-- `spark/bronze/`: ingestion and inspection jobs.
-- `spark/silver/`: validation, merge, audit, and quality checks.
-- `spark/gold/`: hourly aggregation, inspection, and isolated tests.
-- `spark/common/`: Spark, Kafka, storage, and environment settings.
-- `infra/docker/`: image builds and dependency configuration.
-- `tests/`: unit and live integration tests.
-
-[Docker setup](docs/architecture/docker.md) ·
+[Docker](docs/architecture/docker.md) ·
 [Event contract](docs/architecture/event-contract.md) ·
-[Dataset notes](data/README.md)
-
-## Gold hourly metrics
-
-After Silver has processed events, rebuild the Spark image and run the batch job:
-
-```bash
-docker compose --profile silver build silver
-docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/gold/hourly.py
-```
-
-It reads a Silver snapshot and replaces `s3a://flousflow/gold/hourly_transaction_metrics`.
-Each row groups a replay, UTC hour, and transaction type, with counts, total and
-average amount, fraud-labelled count, and fraud rate. Fraud labels come from the
-source dataset. Rerun the job to include newer Silver data; run one Gold writer at
-a time. The first run requires Silver transactions to exist.
-
-Inspect the first 50 rows:
-
-```bash
-docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/gold/inspect_gold.py
-```
-
-Check grouping, totals, and repeat writes with an isolated test:
-
-```bash
-docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/gold/selftest.py
-```
+[Silver](docs/architecture/silver.md) ·
+[Dataset](data/README.md)
