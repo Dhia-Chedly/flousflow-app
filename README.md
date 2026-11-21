@@ -9,7 +9,7 @@ CSV → Python producer → Kafka → Spark Bronze → Spark Silver
 ```
 
 Silver parses and validates Bronze records, deduplicates by event ID, and records
-rejections, conflicts, and quality outcomes. Gold metrics and serving come later.
+rejections, conflicts, and quality outcomes. Gold computes hourly metrics from Silver snapshots; serving comes later.
 
 ## Run locally
 
@@ -115,6 +115,7 @@ For Silver retry, validation, and checkpoint tests, see the
 - `producer/`: CSV validation and Kafka replay.
 - `spark/bronze/`: ingestion and inspection jobs.
 - `spark/silver/`: validation, merge, audit, and quality checks.
+- `spark/gold/`: hourly aggregation, inspection, and isolated tests.
 - `spark/common/`: Spark, Kafka, storage, and environment settings.
 - `infra/docker/`: image builds and dependency configuration.
 - `tests/`: unit and live integration tests.
@@ -122,3 +123,30 @@ For Silver retry, validation, and checkpoint tests, see the
 [Docker setup](docs/architecture/docker.md) ·
 [Event contract](docs/architecture/event-contract.md) ·
 [Dataset notes](data/README.md)
+
+## Gold hourly metrics
+
+After Silver has processed events, rebuild the Spark image and run the batch job:
+
+```bash
+docker compose --profile silver build silver
+docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/gold/hourly.py
+```
+
+It reads a Silver snapshot and replaces `s3a://flousflow/gold/hourly_transaction_metrics`.
+Each row groups a replay, UTC hour, and transaction type, with counts, total and
+average amount, fraud-labelled count, and fraud rate. Fraud labels come from the
+source dataset. Rerun the job to include newer Silver data; run one Gold writer at
+a time. The first run requires Silver transactions to exist.
+
+Inspect the first 50 rows:
+
+```bash
+docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/gold/inspect_gold.py
+```
+
+Check grouping, totals, and repeat writes with an isolated test:
+
+```bash
+docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/gold/selftest.py
+```
