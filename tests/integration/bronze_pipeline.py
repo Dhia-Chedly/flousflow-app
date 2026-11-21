@@ -31,7 +31,7 @@ def compose(*args, **kwargs):
 def await_ready():
     deadline = time.monotonic() + 600
     while time.monotonic() < deadline:
-        output = compose('ps', '-a', '--format', 'json', 'spark-bronze',
+        output = compose('ps', '-a', '--format', 'json', 'bronze',
                          timeout=max(0.1, min(15, deadline - time.monotonic())))
         states = [json.loads(line) for line in output.splitlines() if line.strip()]
         states = [state for state in states if state.get('Name') != 'flousflow-test-inspector']
@@ -41,14 +41,14 @@ def await_ready():
         if state.get('Health') == 'healthy':
             return
         if state.get('State') == 'exited':
-            raise AssertionError(compose('logs', '--tail', '80', 'spark-bronze'))
+            raise AssertionError(compose('logs', '--tail', '80', 'bronze'))
         time.sleep(5)
-    raise AssertionError('Spark did not become ready within ten minutes:\n' + compose('logs', '--tail', '40', 'spark-bronze'))
+    raise AssertionError('Spark did not become ready within ten minutes:\n' + compose('logs', '--tail', '40', 'bronze'))
 
 
 def start_inspector():
     compose('run', '-d', '--no-deps', '--name', 'flousflow-test-inspector',
-            'spark-bronze', '/opt/flousflow/spark/bronze/inspect_table.py', '--serve')
+            'bronze', '/opt/flousflow/spark/bronze/inspect_table.py', '--serve')
     atexit.register(stop_inspector)
     deadline = time.monotonic() + 120
     probe = "import socket; socket.create_connection(('127.0.0.1', 8765), timeout=2).close()"
@@ -111,8 +111,8 @@ def main():
         raise FileNotFoundError('Provide the local PaySim CSV for the 10,000-record test')
     run = 'bronze-test-' + uuid.uuid4().hex
     print('Starting services and building images (first run may take several minutes)...', flush=True)
-    compose('build', 'spark-bronze', stream=True, timeout=600)
-    compose('up', '-d', 'spark-bronze', stream=True, timeout=600)
+    compose('build', 'bronze', stream=True, timeout=600)
+    compose('up', '-d', 'bronze', stream=True, timeout=600)
     print('Waiting for Spark to resolve dependencies and catch up...', flush=True)
     await_ready()
     start_inspector()
@@ -152,8 +152,8 @@ def main():
         assert first['count'] == baseline['count'] + 10000, (baseline, first)
         assert first['unique_offsets'] == baseline['unique_offsets'] + 10000
         print('PASS A/B: 10,000 events committed; Delta log, query and offset counts verified.', flush=True)
-        compose('stop', 'spark-bronze')
-        compose('up', '-d', 'spark-bronze')
+        compose('stop', 'bronze')
+        compose('up', '-d', 'bronze')
         await_ready()
         restarted = await_count(run, 10000)
         assert restarted['count'] == first['count'], (first, restarted)
@@ -164,8 +164,8 @@ def main():
         added = await_count(run + '-additional', 100)
         assert added['count'] == first['count'] + 100
         print('PASS D: 100 new events committed after restart.', flush=True)
-        compose('build', 'spark-bronze', stream=True, timeout=600)
-        compose('up', '-d', '--force-recreate', '--no-deps', 'spark-bronze', stream=True)
+        compose('build', 'bronze', stream=True, timeout=600)
+        compose('up', '-d', '--force-recreate', '--no-deps', 'bronze', stream=True)
         await_ready()
         rebuilt = await_count(run + '-additional', 100)
         assert rebuilt['count'] == added['count']

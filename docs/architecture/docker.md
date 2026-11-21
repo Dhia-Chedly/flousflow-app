@@ -1,16 +1,19 @@
 # Local Docker setup
 
 The producer runs on the host. Compose runs Kafka, MinIO, and Spark on a shared
-bridge network (`fina_default` with the current directory name).
+bridge network named `flousflow`.
 
-| Service | Purpose |
-| --- | --- |
-| `kafka` | One KRaft broker/controller, Kafka 4.1.1 |
-| `kafka-init` | Create `flousflow.transactions` with three partitions and one replica |
-| `minio` | Store Bronze and Silver Delta tables |
-| `minio-init` | Create the `flousflow` bucket |
-| `spark-bronze` | Write Kafka records to Bronze with `local[2]` |
-| `spark-silver` | Validate and deduplicate Bronze records with `local[2]` |
+| Compose service | Container | Purpose |
+| --- | --- | --- |
+| `kafka` | `kafka` | One KRaft broker/controller, Kafka 4.1.1 |
+| `kafka-init` | `kafka-init` | Create `flousflow.transactions` with three partitions and one replica |
+| `minio` | `minio` | Store Bronze and Silver Delta tables |
+| `minio-init` | `minio-init` | Create the `flousflow` bucket |
+| `bronze` | `bronze` | Write Kafka records to Bronze with `local[2]` |
+| `silver` | `silver` | Validate and deduplicate Bronze records with `local[2]` |
+
+Compose commands use the same names as the containers.
+Container names are fixed, so only one copy of this Compose project can run at a time.
 
 The initialization services exit with code `0` after setup. Bronze waits for both;
 Silver waits for Bronze to be healthy. Each writer's health check passes after a
@@ -62,13 +65,13 @@ layer. See the [Silver contract](silver.md) for output paths and retry behavior.
 # Build storage images once
 docker compose --profile silver build minio minio-init
 # Build/start both writers and their dependencies
-docker compose --profile silver up -d --build spark-silver
+docker compose --profile silver up -d --build silver
 # Status and logs
 docker compose --profile silver ps -a
-docker compose logs -f spark-bronze spark-silver
+docker compose logs -f bronze silver
 # Stop/resume ingestion
-docker compose stop spark-silver spark-bronze
-docker compose --profile silver up -d spark-silver
+docker compose stop silver bronze
+docker compose --profile silver up -d silver
 # Stop everything, keeping data
 docker compose --profile bronze --profile silver down
 ```
@@ -129,7 +132,7 @@ the source CSV and downloaded Spark dependencies are kept.
 ```bash
 docker compose --profile bronze --profile silver down
 docker volume rm fina_kafka-data fina_minio-data fina_spark-checkpoints
-docker compose --profile silver up -d --build spark-silver
+docker compose --profile silver up -d --build silver
 # Wait for Kafka and Bronze to be healthy before replaying.
 docker compose --profile silver ps -a
 uv run --locked flousflow-producer

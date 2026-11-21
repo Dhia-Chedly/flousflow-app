@@ -23,16 +23,18 @@ eight). Keep `.env` local.
 ```bash
 uv sync --locked
 docker compose --profile silver build minio minio-init
-docker compose --profile silver up -d --build spark-silver
+docker compose --profile silver up -d --build silver
 docker compose --profile silver ps -a
 ```
 
-This starts Kafka, MinIO, and both Spark writers. The first build compiles MinIO;
+This starts Kafka, MinIO, and both Spark writers on the `flousflow` network.
+Their container names are `kafka`, `minio`, `bronze`, and `silver`; the setup
+containers are `kafka-init` and `minio-init`. The first build compiles MinIO;
 Spark downloads its JVM dependencies on first startup. The initialization services
 should exit with code `0`. Follow startup and batch progress with:
 
 ```bash
-docker compose logs -f spark-bronze spark-silver
+docker compose logs -f bronze silver
 ```
 
 Replay the included three-record sample:
@@ -46,10 +48,10 @@ means Kafka acknowledged the events; Spark processes them afterward.
 
 ```bash
 # Raw Kafka records in Bronze
-docker compose run --rm --no-deps spark-bronze /opt/flousflow/spark/bronze/inspect_table.py
+docker compose run --rm --no-deps bronze /opt/flousflow/spark/bronze/inspect_table.py
 
 # Validated transactions and quality outcomes in Silver
-docker compose --profile silver run --rm --no-deps spark-silver /opt/flousflow/spark/silver/inspect_silver.py
+docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/silver/inspect_silver.py
 ```
 
 After a fresh start with empty data, the sample produces three Silver transactions

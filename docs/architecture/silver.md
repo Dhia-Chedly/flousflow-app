@@ -50,8 +50,8 @@ processing delay; use the inspection command and batch logs to check progress.
 ## Isolated test
 
 ```bash
-docker compose --profile silver build spark-silver
-docker compose --profile silver run --rm --no-deps spark-silver /opt/flousflow/spark/silver/selftest.py
+docker compose --profile silver build silver
+docker compose --profile silver run --rm --no-deps silver /opt/flousflow/spark/silver/selftest.py
 ```
 
 The test uses temporary local Delta tables, not the existing MinIO Silver paths.
@@ -59,7 +59,7 @@ To repeat it on a unique, isolated MinIO prefix, MinIO must be healthy and
 `minio-init` must have finished successfully:
 
 ```bash
-docker compose --profile silver run --rm --no-deps -e FLOUSFLOW_SELFTEST_S3=1 spark-silver /opt/flousflow/spark/silver/selftest.py
+docker compose --profile silver run --rm --no-deps -e FLOUSFLOW_SELFTEST_S3=1 silver /opt/flousflow/spark/silver/selftest.py
 ```
 
 It checks an injected partial-write failure, replay, malformed inputs, conflicts,
